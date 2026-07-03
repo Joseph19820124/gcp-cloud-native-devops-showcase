@@ -9,3 +9,10 @@ resources:
 patches:
 - path: replicas-patch.yaml
 - path: configmap-patch.yaml
+images:
+- name: backend
+  newName: us-central1-docker.pkg.dev/gwsjoseph0326/showcase-dev/backend
+  newTag: ee6deab04120
+- name: frontend
+  newName: us-central1-docker.pkg.dev/gwsjoseph0326/showcase-dev/frontend
+  newTag: "107953502831"

@@ -4,4 +4,4 @@ metadata:
   name: backend-config
 data:
   APP_ENV: "dev"
-  DB_HOST: "10.0.0.3"  # replaced with Cloud SQL private IP at deploy time
+  DB_HOST: "10.26.0.3"   # Cloud SQL private IP (dev); not secret

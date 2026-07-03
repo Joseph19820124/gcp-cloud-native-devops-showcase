@@ -5,19 +5,10 @@ on:
     branches: [main]
     paths:
       - "gcp-showcase/app/**"
-      - "gcp-showcase/k8s/**"
       - ".github/workflows/service-pipeline.yml"
   pull_request:
     paths:
       - "gcp-showcase/app/**"
-      - "gcp-showcase/k8s/**"
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: "Environment to deploy after a manual run"
-        type: choice
-        default: dev
-        options: [dev, test, perf, staging, production]
 
 env:
   GCP_REGION: us-central1
@@ -119,64 +110,33 @@ jobs:
           docker tag frontend:${{ steps.meta.outputs.tag }} $REG/frontend:${{ steps.meta.outputs.tag }}
           docker push $REG/frontend:${{ steps.meta.outputs.tag }}
 
-  deploy-dev:
+  # GitOps: write the new image tag back to git. Argo CD (running in the
+  # cluster) sees the commit and syncs — CI never touches the cluster.
+  update-manifests:
     needs: [build-and-scan, changes]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true')
     runs-on: ubuntu-latest
-    environment: dev
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/deploy-gke
-        with:
-          environment: dev
-          image-tag: ${{ needs.build-and-scan.outputs.image-tag }}
-          backend-changed: ${{ needs.changes.outputs.backend }}
-          frontend-changed: ${{ needs.changes.outputs.frontend }}
-          project: ${{ vars.GCP_PROJECT }}
-          region: ${{ env.GCP_REGION }}
-          zone: us-central1-a
-          wif-provider: ${{ secrets.GCP_WIF_PROVIDER }}
-          deploy-sa: ${{ secrets.GCP_DEPLOY_SA }}
-          db-password: ${{ secrets.DB_PASSWORD }}
-
-  # staging/production run only once those clusters exist — enable by setting
-  # the repo variable ENABLE_FULL_ROLLOUT=true. Otherwise they skip (green).
-  deploy-staging:
-    needs: [deploy-dev, build-and-scan, changes]
-    if: vars.ENABLE_FULL_ROLLOUT == 'true'
-    runs-on: ubuntu-latest
-    environment: staging # configure required reviewers on this GitHub Environment
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/deploy-gke
-        with:
-          environment: staging
-          image-tag: ${{ needs.build-and-scan.outputs.image-tag }}
-          backend-changed: ${{ needs.changes.outputs.backend }}
-          frontend-changed: ${{ needs.changes.outputs.frontend }}
-          project: ${{ vars.GCP_PROJECT }}
-          region: ${{ env.GCP_REGION }}
-          zone: us-central1-a
-          wif-provider: ${{ secrets.GCP_WIF_PROVIDER }}
-          deploy-sa: ${{ secrets.GCP_DEPLOY_SA }}
-          db-password: ${{ secrets.DB_PASSWORD }}
-
-  deploy-production:
-    needs: [deploy-staging, build-and-scan, changes]
-    if: vars.ENABLE_FULL_ROLLOUT == 'true'
-    runs-on: ubuntu-latest
-    environment: production # configure required reviewers on this GitHub Environment
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/deploy-gke
-        with:
-          environment: production
-          image-tag: ${{ needs.build-and-scan.outputs.image-tag }}
-          backend-changed: ${{ needs.changes.outputs.backend }}
-          frontend-changed: ${{ needs.changes.outputs.frontend }}
-          project: ${{ vars.GCP_PROJECT }}
-          region: ${{ env.GCP_REGION }}
-          zone: us-central1-a
-          wif-provider: ${{ secrets.GCP_WIF_PROVIDER }}
-          deploy-sa: ${{ secrets.GCP_DEPLOY_SA }}
-          db-password: ${{ secrets.DB_PASSWORD }}
+      - name: Install kustomize
+        run: |
+          curl -sSLo kustomize.tar.gz https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz
+          tar xzf kustomize.tar.gz && sudo mv kustomize /usr/local/bin/
+      - name: Bump changed image tags in the dev overlay
+        working-directory: gcp-showcase/k8s/overlays/dev
+        run: |
+          REG=${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/showcase-dev
+          TAG=${{ needs.build-and-scan.outputs.image-tag }}
+          [ "${{ needs.changes.outputs.backend }}" = "true" ]  && kustomize edit set image backend=$REG/backend:$TAG
+          [ "${{ needs.changes.outputs.frontend }}" = "true" ] && kustomize edit set image frontend=$REG/frontend:$TAG
+          true
+      - name: Commit & push the tag bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add gcp-showcase/k8s/overlays/dev/kustomization.yaml
+          git diff --cached --quiet && { echo "no tag change"; exit 0; }
+          git commit -m "chore(deploy): bump dev image tag to ${{ needs.build-and-scan.outputs.image-tag }} [skip ci]"
+          git push
