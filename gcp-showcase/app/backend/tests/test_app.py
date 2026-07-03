@@ -13,7 +13,8 @@ def test_hello():
     resp = client.get("/api/hello")
     assert resp.status_code == 200
     body = resp.get_json()
-    assert body["message"] == "Hello, World!"
+    assert "backend" in body["message"].lower()
+    assert "version" in body
 
 
 def test_create_message_requires_text():
