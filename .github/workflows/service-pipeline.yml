@@ -76,7 +76,7 @@ jobs:
       # Build only the service(s) that changed.
       - name: Build backend
         if: needs.changes.outputs.backend == 'true'
-        run: docker build -t backend:${{ steps.meta.outputs.tag }} app/backend
+        run: docker build --build-arg APP_VERSION=${{ steps.meta.outputs.tag }} -t backend:${{ steps.meta.outputs.tag }} app/backend
       - name: Build frontend
         if: needs.changes.outputs.frontend == 'true'
         run: docker build -t frontend:${{ steps.meta.outputs.tag }} app/frontend

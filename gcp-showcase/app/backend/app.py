@@ -86,7 +86,7 @@ def hello():
     return jsonify(
         message="Hello from the backend — shipped by CI/CD!",
         env=os.environ.get("APP_ENV", "local"),
-        version=os.environ.get("APP_VERSION", "v2"),
+        version=os.environ.get("APP_VERSION", "dev"),
     )
 
 

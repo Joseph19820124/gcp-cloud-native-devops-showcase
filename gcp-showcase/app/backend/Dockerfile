@@ -9,6 +9,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 
+# Build version baked into the image (CI passes the commit SHA). Read back at
+# runtime via /api/hello so you can tell exactly which build is deployed.
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
+
 USER app
 
 EXPOSE 5000
