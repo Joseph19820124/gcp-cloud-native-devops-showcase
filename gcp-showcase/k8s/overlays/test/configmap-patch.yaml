@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+data:
+  APP_ENV: "test"
+  DB_HOST: "showcase-test-postgres.xxxxxxxxxx.us-east-1.rds.amazonaws.com"

@@ -1,0 +1,9 @@
+terraform.tfvars
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+crash.log
+__pycache__/
+*.pyc
+kustomize

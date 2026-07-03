@@ -1,0 +1,96 @@
+name: Infra Pipeline
+
+on:
+  pull_request:
+    paths:
+      - "gcp-showcase/terraform/**"
+  push:
+    branches: [main]
+    paths:
+      - "gcp-showcase/terraform/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to plan/apply"
+        type: choice
+        default: dev
+        options: [dev, test, perf, staging, production]
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  TF_VERSION: "1.9.8"
+
+jobs:
+  fmt-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - run: terraform fmt -check -recursive gcp-showcase/terraform
+      - name: Validate every environment
+        run: |
+          for env in dev test perf staging production; do
+            terraform -chdir=gcp-showcase/terraform/environments/$env init -backend=false
+            terraform -chdir=gcp-showcase/terraform/environments/$env validate
+          done
+
+  plan:
+    needs: fmt-validate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev, test, perf, staging, production]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - name: Terraform plan
+        working-directory: gcp-showcase/terraform/environments/${{ matrix.environment }}
+        run: |
+          cp terraform.tfvars.example terraform.tfvars
+          terraform init
+          terraform plan -var-file=terraform.tfvars -out=tfplan
+        env:
+          TF_VAR_project_id: ${{ vars.GCP_PROJECT }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+
+  apply:
+    needs: plan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1
+      matrix:
+        environment: [dev, test, perf, staging, production]
+    environment: ${{ matrix.environment }} # staging/production should require reviewer approval
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - name: Terraform apply
+        working-directory: gcp-showcase/terraform/environments/${{ matrix.environment }}
+        run: |
+          cp terraform.tfvars.example terraform.tfvars
+          terraform init
+          terraform apply -auto-approve -var-file=terraform.tfvars
+        env:
+          TF_VAR_project_id: ${{ vars.GCP_PROJECT }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}

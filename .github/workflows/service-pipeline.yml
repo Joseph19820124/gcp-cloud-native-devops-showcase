@@ -1,0 +1,140 @@
+name: Service Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "gcp-showcase/app/**"
+      - "gcp-showcase/k8s/**"
+      - ".github/workflows/service-pipeline.yml"
+  pull_request:
+    paths:
+      - "gcp-showcase/app/**"
+      - "gcp-showcase/k8s/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy after a manual run"
+        type: choice
+        default: dev
+        options: [dev, test, perf, staging, production]
+
+env:
+  GCP_REGION: us-central1
+  GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+  # <region>-docker.pkg.dev/<project>/showcase-<env>
+  WORKDIR: gcp-showcase
+
+permissions:
+  id-token: write # required for Workload Identity Federation
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKDIR }}/app/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: pytest -v
+
+  build-and-scan:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tag }}
+    defaults:
+      run:
+        working-directory: ${{ env.WORKDIR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: meta
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud (WIF)
+        if: github.event_name != 'pull_request'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - name: Configure Docker for Artifact Registry
+        if: github.event_name != 'pull_request'
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build images
+        run: |
+          docker build -t backend:${{ steps.meta.outputs.tag }} app/backend
+          docker build -t frontend:${{ steps.meta.outputs.tag }} app/frontend
+
+      - name: Scan images with Trivy
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: backend:${{ steps.meta.outputs.tag }}
+          severity: "CRITICAL,HIGH"
+          exit-code: "0" # flip to "1" to fail the build on findings once triaged
+
+      - name: Push to Artifact Registry
+        if: github.event_name != 'pull_request'
+        run: |
+          REG=${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}
+          for svc in backend frontend; do
+            # images are promoted across envs by tag; dev registry is the source of truth
+            docker tag "$svc:${{ steps.meta.outputs.tag }}" "$REG/showcase-dev/$svc:${{ steps.meta.outputs.tag }}"
+            docker push "$REG/showcase-dev/$svc:${{ steps.meta.outputs.tag }}"
+          done
+
+  deploy-dev:
+    needs: build-and-scan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/deploy-gke
+        with:
+          environment: dev
+          image-tag: ${{ needs.build-and-scan.outputs.image-tag }}
+          project: ${{ vars.GCP_PROJECT }}
+          region: ${{ env.GCP_REGION }}
+          zone: us-central1-a
+          wif-provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          deploy-sa: ${{ secrets.GCP_DEPLOY_SA }}
+
+  deploy-staging:
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: staging # configure required reviewers on this GitHub Environment
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/deploy-gke
+        with:
+          environment: staging
+          image-tag: ${{ needs.build-and-scan.outputs.image-tag }}
+          project: ${{ vars.GCP_PROJECT }}
+          region: ${{ env.GCP_REGION }}
+          zone: us-central1-a
+          wif-provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          deploy-sa: ${{ secrets.GCP_DEPLOY_SA }}
+
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production # configure required reviewers on this GitHub Environment
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/deploy-gke
+        with:
+          environment: production
+          image-tag: ${{ needs.build-and-scan.outputs.image-tag }}
+          project: ${{ vars.GCP_PROJECT }}
+          region: ${{ env.GCP_REGION }}
+          zone: us-central1-a
+          wif-provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          deploy-sa: ${{ secrets.GCP_DEPLOY_SA }}

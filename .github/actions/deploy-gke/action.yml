@@ -1,0 +1,49 @@
+name: Deploy showcase app to GKE
+description: Authenticates via WIF, points kustomize at the Artifact Registry images, and applies the overlay for one environment.
+
+inputs:
+  environment:
+    required: true
+    description: dev | test | perf | staging | production
+  image-tag:
+    required: true
+  project:
+    required: true
+  region:
+    required: true
+  zone:
+    required: true
+  wif-provider:
+    required: true
+  deploy-sa:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ inputs.wif-provider }}
+        service_account: ${{ inputs.deploy-sa }}
+
+    - uses: google-github-actions/setup-gcloud@v2
+
+    - name: Get GKE credentials
+      shell: bash
+      run: |
+        gcloud container clusters get-credentials showcase-${{ inputs.environment }}-gke \
+          --zone ${{ inputs.zone }} --project ${{ inputs.project }}
+
+    - name: Set image tags and apply overlay
+      shell: bash
+      working-directory: gcp-showcase/k8s/overlays/${{ inputs.environment }}
+      run: |
+        REG=${{ inputs.region }}-docker.pkg.dev/${{ inputs.project }}/showcase-dev
+        curl -sSLo kustomize.tar.gz https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz
+        tar xzf kustomize.tar.gz
+        ./kustomize edit set image \
+          backend=$REG/backend:${{ inputs.image-tag }} \
+          frontend=$REG/frontend:${{ inputs.image-tag }}
+        ./kustomize build . | kubectl apply -f -
+        kubectl -n showcase-${{ inputs.environment }} rollout status deployment/backend --timeout=180s
+        kubectl -n showcase-${{ inputs.environment }} rollout status deployment/frontend --timeout=180s

@@ -1,0 +1,15 @@
+project_id = "your-gcp-project-id"
+region     = "us-central1"
+zone       = "us-central1-a"
+
+node_machine_type = "e2-medium"
+node_count        = 2
+node_min_count    = 1
+node_max_count    = 3
+
+db_tier              = "db-f1-micro"
+db_availability_type = "ZONAL"
+deletion_protection  = false
+
+# Set via TF_VAR_db_password or Secret Manager in real usage; never commit real secrets.
+db_password = "changeme-dev"

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+data:
+  APP_ENV: "base"
+  DB_HOST: "showcase-db.internal"
+  DB_PORT: "5432"
+  DB_NAME: "helloworld"
+  DB_USER: "helloworld"

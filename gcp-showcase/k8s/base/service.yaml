@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+    - port: 5000
+      targetPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+spec:
+  # External L4 load balancer with a public IP. The nginx frontend proxies
+  # /api to the backend Service, so this single entry point serves the whole
+  # app. (A GKE Ingress + ManagedCertificate is the HTTPS path — see docs.)
+  type: LoadBalancer
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 8080
