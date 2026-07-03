@@ -15,4 +15,4 @@ images:
   newTag: ee6deab04120
 - name: frontend
   newName: us-central1-docker.pkg.dev/gwsjoseph0326/showcase-dev/frontend
-  newTag: "107953502831"
+  newTag: 7ed86e8f1a23
