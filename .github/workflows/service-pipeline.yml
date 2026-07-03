@@ -22,7 +22,6 @@ on:
 env:
   GCP_REGION: us-central1
   GCP_PROJECT: ${{ vars.GCP_PROJECT }}
-  # <region>-docker.pkg.dev/<project>/showcase-<env>
   WORKDIR: gcp-showcase
 
 permissions:
@@ -30,6 +29,23 @@ permissions:
   contents: read
 
 jobs:
+  # Detect which service actually changed so we only build/push that one.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'gcp-showcase/app/backend/**'
+            frontend:
+              - 'gcp-showcase/app/frontend/**'
+
   test:
     runs-on: ubuntu-latest
     defaults:
@@ -44,7 +60,7 @@ jobs:
       - run: pytest -v
 
   build-and-scan:
-    needs: test
+    needs: [test, changes]
     runs-on: ubuntu-latest
     outputs:
       image-tag: ${{ steps.meta.outputs.tag }}
@@ -57,41 +73,54 @@ jobs:
       - id: meta
         run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
 
-      - name: Authenticate to Google Cloud (WIF)
-        if: github.event_name != 'pull_request'
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      # Build only the service(s) that changed.
+      - name: Build backend
+        if: needs.changes.outputs.backend == 'true'
+        run: docker build -t backend:${{ steps.meta.outputs.tag }} app/backend
+      - name: Build frontend
+        if: needs.changes.outputs.frontend == 'true'
+        run: docker build -t frontend:${{ steps.meta.outputs.tag }} app/frontend
 
-      - name: Configure Docker for Artifact Registry
-        if: github.event_name != 'pull_request'
-        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
-
-      - name: Build images
-        run: |
-          docker build -t backend:${{ steps.meta.outputs.tag }} app/backend
-          docker build -t frontend:${{ steps.meta.outputs.tag }} app/frontend
-
-      - name: Scan images with Trivy
+      - name: Scan backend with Trivy
+        if: needs.changes.outputs.backend == 'true'
         uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: backend:${{ steps.meta.outputs.tag }}
           severity: "CRITICAL,HIGH"
           exit-code: "0" # flip to "1" to fail the build on findings once triaged
+      - name: Scan frontend with Trivy
+        if: needs.changes.outputs.frontend == 'true'
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: frontend:${{ steps.meta.outputs.tag }}
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
 
-      - name: Push to Artifact Registry
-        if: github.event_name != 'pull_request'
+      # Push only the changed service(s), and only on real pushes (not PRs).
+      - name: Authenticate to Google Cloud (WIF)
+        if: github.event_name != 'pull_request' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true')
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - name: Configure Docker for Artifact Registry
+        if: github.event_name != 'pull_request' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true')
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+      - name: Push backend
+        if: github.event_name != 'pull_request' && needs.changes.outputs.backend == 'true'
         run: |
-          REG=${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}
-          for svc in backend frontend; do
-            # images are promoted across envs by tag; dev registry is the source of truth
-            docker tag "$svc:${{ steps.meta.outputs.tag }}" "$REG/showcase-dev/$svc:${{ steps.meta.outputs.tag }}"
-            docker push "$REG/showcase-dev/$svc:${{ steps.meta.outputs.tag }}"
-          done
+          REG=${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/showcase-dev
+          docker tag backend:${{ steps.meta.outputs.tag }} $REG/backend:${{ steps.meta.outputs.tag }}
+          docker push $REG/backend:${{ steps.meta.outputs.tag }}
+      - name: Push frontend
+        if: github.event_name != 'pull_request' && needs.changes.outputs.frontend == 'true'
+        run: |
+          REG=${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/showcase-dev
+          docker tag frontend:${{ steps.meta.outputs.tag }} $REG/frontend:${{ steps.meta.outputs.tag }}
+          docker push $REG/frontend:${{ steps.meta.outputs.tag }}
 
   deploy-dev:
-    needs: build-and-scan
+    needs: [build-and-scan, changes]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     environment: dev
@@ -101,6 +130,8 @@ jobs:
         with:
           environment: dev
           image-tag: ${{ needs.build-and-scan.outputs.image-tag }}
+          backend-changed: ${{ needs.changes.outputs.backend }}
+          frontend-changed: ${{ needs.changes.outputs.frontend }}
           project: ${{ vars.GCP_PROJECT }}
           region: ${{ env.GCP_REGION }}
           zone: us-central1-a
@@ -111,7 +142,7 @@ jobs:
   # staging/production run only once those clusters exist — enable by setting
   # the repo variable ENABLE_FULL_ROLLOUT=true. Otherwise they skip (green).
   deploy-staging:
-    needs: deploy-dev
+    needs: [deploy-dev, build-and-scan, changes]
     if: vars.ENABLE_FULL_ROLLOUT == 'true'
     runs-on: ubuntu-latest
     environment: staging # configure required reviewers on this GitHub Environment
@@ -121,6 +152,8 @@ jobs:
         with:
           environment: staging
           image-tag: ${{ needs.build-and-scan.outputs.image-tag }}
+          backend-changed: ${{ needs.changes.outputs.backend }}
+          frontend-changed: ${{ needs.changes.outputs.frontend }}
           project: ${{ vars.GCP_PROJECT }}
           region: ${{ env.GCP_REGION }}
           zone: us-central1-a
@@ -129,7 +162,7 @@ jobs:
           db-password: ${{ secrets.DB_PASSWORD }}
 
   deploy-production:
-    needs: deploy-staging
+    needs: [deploy-staging, build-and-scan, changes]
     if: vars.ENABLE_FULL_ROLLOUT == 'true'
     runs-on: ubuntu-latest
     environment: production # configure required reviewers on this GitHub Environment
@@ -139,6 +172,8 @@ jobs:
         with:
           environment: production
           image-tag: ${{ needs.build-and-scan.outputs.image-tag }}
+          backend-changed: ${{ needs.changes.outputs.backend }}
+          frontend-changed: ${{ needs.changes.outputs.frontend }}
           project: ${{ vars.GCP_PROJECT }}
           region: ${{ env.GCP_REGION }}
           zone: us-central1-a

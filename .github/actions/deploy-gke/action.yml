@@ -7,6 +7,14 @@ inputs:
     description: dev | test | perf | staging | production
   image-tag:
     required: true
+  backend-changed:
+    required: false
+    default: "true"
+    description: Whether the backend image was rebuilt this run
+  frontend-changed:
+    required: false
+    default: "true"
+    description: Whether the frontend image was rebuilt this run
   project:
     required: true
   region:
@@ -48,24 +56,38 @@ runs:
       working-directory: gcp-showcase/k8s/overlays/${{ inputs.environment }}
       run: |
         REG=${{ inputs.region }}-docker.pkg.dev/${{ inputs.project }}/showcase-dev
+        NS=showcase-${{ inputs.environment }}
+        NEW_TAG=${{ inputs.image-tag }}
+
+        # A changed service deploys the freshly-built tag; an unchanged one
+        # keeps whatever tag is currently running (that image already exists in
+        # Artifact Registry). Falls back to NEW_TAG if nothing is live yet.
+        resolve_tag() {
+          local svc=$1 changed=$2 cur
+          if [ "$changed" = "true" ]; then echo "$NEW_TAG"; return; fi
+          cur=$(kubectl -n "$NS" get deploy "$svc" \
+                -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null | sed 's#.*:##')
+          [ -n "$cur" ] && echo "$cur" || echo "$NEW_TAG"
+        }
+        BTAG=$(resolve_tag backend  "${{ inputs.backend-changed }}")
+        FTAG=$(resolve_tag frontend "${{ inputs.frontend-changed }}")
+        echo "deploying backend:$BTAG  frontend:$FTAG"
+
         curl -sSLo kustomize.tar.gz https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz
         tar xzf kustomize.tar.gz
         ./kustomize edit set image \
-          backend=$REG/backend:${{ inputs.image-tag }} \
-          frontend=$REG/frontend:${{ inputs.image-tag }}
-        ./kustomize build . | kubectl apply -f -
+          backend=$REG/backend:$BTAG \
+          frontend=$REG/frontend:$FTAG
 
-    - name: Inject DB config (Cloud SQL private IP + password)
-      shell: bash
-      run: |
-        NS=showcase-${{ inputs.environment }}
-        kubectl -n "$NS" patch configmap backend-config --type merge \
-          -p "{\"data\":{\"DB_HOST\":\"${{ steps.db.outputs.ip }}\"}}"
-        kubectl -n "$NS" create secret generic backend-secret \
-          --from-literal=DB_PASSWORD='${{ inputs.db-password }}' \
-          --dry-run=client -o yaml | kubectl apply -f -
-        # roll the backend so it picks up the ConfigMap/Secret changes
-        kubectl -n "$NS" rollout restart deployment/backend
+        # Bake the real DB config into the manifest BEFORE applying, so
+        # `kubectl apply` only rolls the service whose image actually changed —
+        # no forced restarts, and pods never boot with placeholder config.
+        ./kustomize build . > rendered.yaml
+        DB_IP='${{ steps.db.outputs.ip }}'
+        DB_PW='${{ inputs.db-password }}'
+        sed -i "s#\(^[[:space:]]*DB_HOST:\).*#\1 \"$DB_IP\"#" rendered.yaml
+        sed -i "s#\(^[[:space:]]*DB_PASSWORD:\).*#\1 \"$DB_PW\"#" rendered.yaml
+        kubectl apply -f rendered.yaml
 
     - name: Wait for rollout
       shell: bash
