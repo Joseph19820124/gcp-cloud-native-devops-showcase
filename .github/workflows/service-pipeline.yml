@@ -106,9 +106,13 @@ jobs:
           zone: us-central1-a
           wif-provider: ${{ secrets.GCP_WIF_PROVIDER }}
           deploy-sa: ${{ secrets.GCP_DEPLOY_SA }}
+          db-password: ${{ secrets.DB_PASSWORD }}
 
+  # staging/production run only once those clusters exist — enable by setting
+  # the repo variable ENABLE_FULL_ROLLOUT=true. Otherwise they skip (green).
   deploy-staging:
     needs: deploy-dev
+    if: vars.ENABLE_FULL_ROLLOUT == 'true'
     runs-on: ubuntu-latest
     environment: staging # configure required reviewers on this GitHub Environment
     steps:
@@ -122,9 +126,11 @@ jobs:
           zone: us-central1-a
           wif-provider: ${{ secrets.GCP_WIF_PROVIDER }}
           deploy-sa: ${{ secrets.GCP_DEPLOY_SA }}
+          db-password: ${{ secrets.DB_PASSWORD }}
 
   deploy-production:
     needs: deploy-staging
+    if: vars.ENABLE_FULL_ROLLOUT == 'true'
     runs-on: ubuntu-latest
     environment: production # configure required reviewers on this GitHub Environment
     steps:
@@ -138,3 +144,4 @@ jobs:
           zone: us-central1-a
           wif-provider: ${{ secrets.GCP_WIF_PROVIDER }}
           deploy-sa: ${{ secrets.GCP_DEPLOY_SA }}
+          db-password: ${{ secrets.DB_PASSWORD }}

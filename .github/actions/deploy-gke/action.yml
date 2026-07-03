@@ -1,5 +1,5 @@
 name: Deploy showcase app to GKE
-description: Authenticates via WIF, points kustomize at the Artifact Registry images, and applies the overlay for one environment.
+description: Authenticates via WIF, points kustomize at the Artifact Registry images, injects DB config, and applies the overlay for one environment.
 
 inputs:
   environment:
@@ -17,6 +17,9 @@ inputs:
     required: true
   deploy-sa:
     required: true
+  db-password:
+    required: true
+    description: Application DB password (from a GitHub secret)
 
 runs:
   using: composite
@@ -26,13 +29,19 @@ runs:
         workload_identity_provider: ${{ inputs.wif-provider }}
         service_account: ${{ inputs.deploy-sa }}
 
-    - uses: google-github-actions/setup-gcloud@v2
+    - uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: showcase-${{ inputs.environment }}-gke
+        location: ${{ inputs.zone }}
 
-    - name: Get GKE credentials
+    - name: Discover Cloud SQL private IP
+      id: db
       shell: bash
       run: |
-        gcloud container clusters get-credentials showcase-${{ inputs.environment }}-gke \
-          --zone ${{ inputs.zone }} --project ${{ inputs.project }}
+        IP=$(gcloud sql instances describe showcase-${{ inputs.environment }}-postgres \
+          --project ${{ inputs.project }} \
+          --format='value(ipAddresses[0].ipAddress)')
+        echo "ip=$IP" >> "$GITHUB_OUTPUT"
 
     - name: Set image tags and apply overlay
       shell: bash
@@ -45,5 +54,22 @@ runs:
           backend=$REG/backend:${{ inputs.image-tag }} \
           frontend=$REG/frontend:${{ inputs.image-tag }}
         ./kustomize build . | kubectl apply -f -
-        kubectl -n showcase-${{ inputs.environment }} rollout status deployment/backend --timeout=180s
-        kubectl -n showcase-${{ inputs.environment }} rollout status deployment/frontend --timeout=180s
+
+    - name: Inject DB config (Cloud SQL private IP + password)
+      shell: bash
+      run: |
+        NS=showcase-${{ inputs.environment }}
+        kubectl -n "$NS" patch configmap backend-config --type merge \
+          -p "{\"data\":{\"DB_HOST\":\"${{ steps.db.outputs.ip }}\"}}"
+        kubectl -n "$NS" create secret generic backend-secret \
+          --from-literal=DB_PASSWORD='${{ inputs.db-password }}' \
+          --dry-run=client -o yaml | kubectl apply -f -
+        # roll the backend so it picks up the ConfigMap/Secret changes
+        kubectl -n "$NS" rollout restart deployment/backend
+
+    - name: Wait for rollout
+      shell: bash
+      run: |
+        NS=showcase-${{ inputs.environment }}
+        kubectl -n "$NS" rollout status deployment/backend --timeout=180s
+        kubectl -n "$NS" rollout status deployment/frontend --timeout=180s
