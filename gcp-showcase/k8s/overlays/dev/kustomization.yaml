@@ -6,6 +6,7 @@ namespace: showcase-dev
 resources:
 - ../../base
 - ingress.yaml
+- managed-certificate.yaml
 
 patches:
 - path: replicas-patch.yaml

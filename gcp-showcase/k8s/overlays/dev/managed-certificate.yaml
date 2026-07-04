@@ -1,0 +1,10 @@
+# GKE-managed TLS certificate — Google provisions and auto-renews it once the
+# domain resolves to the Ingress IP. Referenced by the Ingress annotation
+# networking.gke.io/managed-certificates.
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: devops-cert
+spec:
+  domains:
+    - devops.chen-siyi.dev
