@@ -1,0 +1,28 @@
+# Single L7 entry point (GCP external HTTP load balancer). Routes by path:
+#   /api  -> backend  Service (:5000)
+#   /     -> frontend Service (:80 -> nginx :8080)
+# Both Services are ClusterIP; only this Ingress is public.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: showcase
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 5000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

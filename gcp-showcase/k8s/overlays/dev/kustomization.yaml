@@ -5,10 +5,12 @@ namespace: showcase-dev
 
 resources:
 - ../../base
+- ingress.yaml
 
 patches:
 - path: replicas-patch.yaml
 - path: configmap-patch.yaml
+- path: service-ingress-patch.yaml
 images:
 - name: backend
   newName: us-central1-docker.pkg.dev/gwsjoseph0326/showcase-dev/backend

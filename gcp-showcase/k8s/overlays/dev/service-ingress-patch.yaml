@@ -1,0 +1,17 @@
+# For the L7 Ingress demo: both services are internal (ClusterIP) and use
+# container-native load balancing (NEG) so the GCP HTTP LB targets pods directly.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
