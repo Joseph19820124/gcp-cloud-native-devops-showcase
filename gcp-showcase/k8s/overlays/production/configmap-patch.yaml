@@ -4,4 +4,4 @@ metadata:
   name: backend-config
 data:
   APP_ENV: "production"
-  DB_HOST: "showcase-production-postgres.xxxxxxxxxx.us-east-1.rds.amazonaws.com"
+  DB_HOST: "10.26.0.3"   # shared dev Cloud SQL (demo)

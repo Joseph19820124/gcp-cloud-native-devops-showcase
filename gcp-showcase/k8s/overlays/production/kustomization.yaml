@@ -4,12 +4,17 @@ kind: Kustomization
 namespace: showcase-production
 
 resources:
-  - ../../base
+- ../../base
 
 patches:
-  - path: replicas-patch.yaml
-  - path: configmap-patch.yaml
-  - path: hpa-patch.yaml
-
-# Image tags are set by the CI/CD pipeline at deploy time via:
-#   kustomize edit set image backend=$BACKEND_IMAGE frontend=$FRONTEND_IMAGE
+- path: replicas-patch.yaml
+- path: configmap-patch.yaml
+- path: service-clusterip-patch.yaml
+- path: hpa-patch.yaml
+images:
+- name: backend
+  newName: us-central1-docker.pkg.dev/gwsjoseph0326/showcase-dev/backend
+  newTag: ee6deab04120
+- name: frontend
+  newName: us-central1-docker.pkg.dev/gwsjoseph0326/showcase-dev/frontend
+  newTag: 7ed86e8f1a23
