@@ -35,7 +35,7 @@ variable "node_min_count" {
 
 variable "node_max_count" {
   type    = number
-  default = 3
+  default = 5
 }
 
 variable "db_tier" {
