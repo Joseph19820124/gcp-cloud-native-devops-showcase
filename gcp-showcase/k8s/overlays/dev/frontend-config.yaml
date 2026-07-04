@@ -1,0 +1,10 @@
+# Tells the GCP L7 load balancer to 301-redirect all HTTP (:80) requests to
+# HTTPS (:443) at the edge — traffic never reaches the backends over plaintext.
+apiVersion: networking.gke.io/v1beta1
+kind: FrontendConfig
+metadata:
+  name: ssl-redirect
+spec:
+  redirectToHttps:
+    enabled: true
+    responseCodeName: MOVED_PERMANENTLY_DEFAULT
