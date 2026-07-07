@@ -10,4 +10,10 @@ resource "google_storage_bucket" "this" {
   }
 
   public_access_prevention = "enforced"
+
+  # infra-change demo: labels applied by the auto-deploy pipeline
+  labels = {
+    managed_by = "terraform"
+    pipeline   = "auto-deploy"
+  }
 }
