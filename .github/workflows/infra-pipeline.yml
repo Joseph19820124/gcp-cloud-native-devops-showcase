@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        environment: [dev, test, perf, staging, production]
+        environment: [dev] # scoped to dev only (avoid spinning up 5 clusters)
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -73,7 +73,7 @@ jobs:
     strategy:
       max-parallel: 1
       matrix:
-        environment: [dev, test, perf, staging, production]
+        environment: [dev] # scoped to dev only (avoid spinning up 5 clusters)
     environment: ${{ matrix.environment }} # staging/production should require reviewer approval
     steps:
       - uses: actions/checkout@v4

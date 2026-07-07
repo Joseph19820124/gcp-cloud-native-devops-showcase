@@ -1,14 +1,9 @@
 name: Service Pipeline
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "gcp-showcase/app/**"
-      - ".github/workflows/service-pipeline.yml"
-  pull_request:
-    paths:
-      - "gcp-showcase/app/**"
+  # Auto-triggers disabled — this environment runs the infra pipeline only.
+  # (No GKE cluster / Argo CD here to deploy to.) Manual runs still possible.
+  workflow_dispatch:
 
 env:
   GCP_REGION: us-central1
